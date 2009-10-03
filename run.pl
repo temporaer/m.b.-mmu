@@ -6,7 +6,7 @@ use Carp qw/croak/;
 
 enum 'MMU::PageBase' => qw( ALTMEMDDR_0_BASE ALTMEMDDR_1_BASE );
 has 'pagesbase' => (is => 'rw', isa => 'MMU::PageBase');
-has 'memsize'   => (is => 'rw', isa => 'Int');
+has 'memsize'   => (is => 'rw', isa => 'Str');
 has 'activetask' => (is => 'rw', isa => 'Str', default => "none");
 has 'maxalloc'  => (is => 'rw', isa => 'Int', required => 1);
 has 'used_tasksets'  => (is => 'rw', isa => 'ArrayRef[Str]', default => sub{[]});
@@ -31,7 +31,7 @@ sub init{
 sub finish{
 	my $self = shift;
 	print "destroyRTMem();
-// TODO: printf(...);
+// TODO: printf(...); // statistics
 }\n";
 }
 
@@ -63,7 +63,10 @@ sub alloc{
 	my $self = shift;
 	croak "Var is already allocated!" if $self->isalloc;
 	$self->isalloc(1);
-	print "unsigned int * " . $self->name . " = (unsigned int*) malloc(" .  $self->size . ");\n" 
+	print "// begin_measure_time()\n";
+	print "unsigned int * " . $self->name . " = (unsigned int*) malloc(" .  $self->size . ");\n" ;
+	print "// end_measure_time()\n";
+	print "// statistics: malloc " . $self->task->modus . "\n";
 }
 
 sub assign{
@@ -71,7 +74,10 @@ sub assign{
 	croak "Var is not yet allocated!"   unless $self->isalloc;
 	croak "Index must be >0"            unless $idx>0;
 	croak "Index must be <".$self->size unless $idx<$self->size;
+	print "// begin_measure_time()\n";
 	print $self->name . "[" . $val . "] = $val;\n";
+	print "// end_measure_time()\n";
+	print "// statistics: access-write " . $self->task->modus . "\n";
 }
 
 sub read{
@@ -79,13 +85,19 @@ sub read{
 	croak "Var is not yet allocated!"   unless $self->isalloc;
 	croak "Index must be >=0"           unless $idx>=0;
 	croak "Index must be <".$self->size unless $idx<$self->size;
+	print "// begin_measure_time()\n";
 	print "unsigned int _i" . int(rand(1E10)) . " = " .  $self->name . "[" .  $idx . "];\n";
+	print "// end_measure_time()\n";
+	print "// statistics: access-read ". $self->task->modus . "\n";
 }
 sub free{
 	my ($self,$idx)  = @_;
 	croak "Var is not yet allocated!"   unless $self->isalloc;
 	$self->isalloc(0);
-	print "free(". $self->name . ");\n"
+	print "// begin_measure_time()\n";
+	print "free(". $self->name . ");\n";
+	print "// end_measure_time()\n";
+	print "// statistics: free\n";
 }
 
 package Task;
@@ -100,6 +112,7 @@ enum 'Task::Mode' => qw(
 has 'name'      => (is => 'rw', isa => 'Str', required => 1);
 has 'taskid'    => (is => 'rw', isa => 'Str', default => "n/a");
 has 'modi'      => (is => 'rw', isa => 'ArrayRef[Task::Mode]', required => 1);
+has 'modus'     => (is => 'rw', isa => 'Task::Mode', required => 0);
 has 'tablebase' => (is => 'rw', isa => 'Str', required => 1);
 has 'markerbase'=> (is => 'rw', isa => 'Str', required => 1);
 has 'treebase'  => (is => 'rw', isa => 'Str', required => 1);
@@ -119,8 +132,9 @@ sub create {
 	croak "Recreating ".$self->name if ($self->created);
 	$self->created(1);
 	$self->taskid($self->mmu->use_task());
+	$self->modus($self->modi->[int(rand(scalar(@{$self->modi})))]);
 	print "createTask( &" . $self->taskid . ", // " . $self->name . "\n"
-		."	("  . $self->modi->[int(rand(scalar(@{$self->modi})))]  . " | RT_MMU_CONTROL_IE_MSK ), \n"
+		."	("  . $self->modus  . " | RT_MMU_CONTROL_IE_MSK ), \n"
 		."	(void*) (" . $self->mmu->pagesbase . " + " . $self->tablebase . "),\n"
 		."	(void*) (" . $self->mmu->pagesbase . " + " . $self->markerbase . "),\n"
 		."	(void*) (" . $self->mmu->pagesbase . " + " . $self->treebase . "),\n"
@@ -170,7 +184,7 @@ sub add_var{
 
 package main;
 use Data::Dumper;
-use List::Util qw/sum/;
+use List::Util qw/sum max/;
 use YAML::Tiny;
 
 sub task_factory{
@@ -211,7 +225,7 @@ map{ $_->create(), "\n" } @tasks;
 
 my $whole = $cfg->{lifetime_of_tasks} eq "whole";
 my @actions = qw/ malloc_var free_var assign_var read_var /;
-push @actions, qw/ del_task add_task / unless $whole;
+push @actions, qw/ switch_task / unless $whole;
 
 my $rnd_weights = [
   $cfg->{number_of_mallocs} ,  # malloc
@@ -219,9 +233,14 @@ my $rnd_weights = [
   (1-$cfg->{percent_of_reads}) * $cfg->{number_of_accesses},  # assign
      $cfg->{percent_of_reads}  * $cfg->{number_of_accesses},  # read
 ];
-push @$rnd_weights, (10, 10)  unless $whole;  # del_task, add_task  (TODO: specify probs!)
+push @$rnd_weights, $cfg->{number_of_task_switches} unless $whole;  # switch_task (TODO: specify probs!)
 my $s = sum @$rnd_weights;
 @$rnd_weights = map{ $_/$s } @$rnd_weights;
+
+my $max_var_num = 0;
+my $sum_var_num = 0;
+my $cnt_var_num = 0;
+my $sum_mem_size = 0;
 
 my %actionstats = map{ $_ => 0 } (@actions, 'num_acc');
 while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
@@ -236,6 +255,7 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
      $t->activate();
      $t->add_var( $v );
      push @vars, $v;
+     $max_var_num = max($max_var_num, scalar @vars);
    }
    if($act eq "free_var"){
      if($actionstats{malloc_var} >= $cfg->{number_of_mallocs} # cannot allocate new variable
@@ -259,14 +279,7 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
      my $v = $vars[int(rand($#vars+1))];
      $v->assign( int(rand($v->size)), int(rand(10000)) );
    }
-   if($act eq "add_task"){
-     next if scalar @tasks >= $cfg->{max_task_num};
-     print "-----> Adding Task: currently: ", scalar(@tasks), "\n";
-     my $t = task_factory($cfg->{tasks}, $mmu);
-     $t->create();
-     unshift @tasks, $t;
-   }
-   if($act eq "del_task"){
+   if($act eq "switch_task"){
      next if scalar @tasks <= 1;
      next if($actionstats{malloc_var}>=$cfg->{number_of_mallocs}  # all mallocs used up
           and $actionstats{num_acc}<$cfg->{number_of_accesses});  # still need to access variables -> dont del task!
@@ -278,9 +291,16 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
 	else{ 1 }
      }@vars;
      $t->destroy();
+     next if scalar @tasks >= $cfg->{max_task_num};
+     $t = task_factory($cfg->{tasks}, $mmu);
+     $t->create();
+     unshift @tasks, $t;
    }
    $actionstats{$act}++;
    $actionstats{num_acc} = $actionstats{read_var} + $actionstats{assign_var};
+   $sum_var_num += scalar @vars;
+   $cnt_var_num ++;
+   $sum_mem_size += $mmu->memsize;
 }
 while(scalar @vars){
   my $v = shift @vars;
@@ -293,4 +313,14 @@ while(scalar @tasks){
 }
 $mmu->finish();
 
-print Dumper(\%actionstats);
+my $doc = YAML::Tiny::Dump(\%actionstats);
+$doc =~ s|^---$||gm;
+$doc =~ s|^|// |gm;
+print  "// --------------- BEGIN CALL STATISTICS ------------- // \n";
+print  $doc;
+print  "// \n";
+print  "// Maximum number of allocated variables: " . $max_var_num . "\n";
+printf "// Average number of allocated variables: %3.3f\n" , $sum_var_num/$cnt_var_num;
+printf "// Average number of available bytes:     %3.3f\n" , $sum_mem_size/$cnt_var_num;
+printf "// Average number of used bytes:          %3.3f\n" , $mmu->memsize - $sum_mem_size/$cnt_var_num;
+print  "// --------------- END CALL STATISTICS ------------- // \n";

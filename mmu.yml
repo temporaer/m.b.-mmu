@@ -1,5 +1,5 @@
 ---
-physical_size:            1000000
+physical_size:            100000               # if the program fails because of memory problems, restart or reduce malloc-sizes.
 physical_usage:           0.75
 physical_structures_base: ALTMEMDDR_1_BASE
 tasks:
@@ -21,8 +21,9 @@ tasks:
 
 max_task_num:             5
 lifetime_of_tasks:        not-whole
-number_of_mallocs:        10
-number_of_accesses:       10
+number_of_mallocs:        100
+number_of_accesses:       100
+number_of_task_switches:  30              # this value will not be accomplished exactly
 percent_of_reads:         .5
-malloc_size_min:          1000
-malloc_size_max:          10000
+malloc_size_min:          10000
+malloc_size_max:          20000
