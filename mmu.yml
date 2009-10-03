@@ -1,9 +1,10 @@
 ---
-physical_size:            100000               # if the program fails because of memory problems, restart or reduce malloc-sizes.
+# if the program fails because of memory problems, reduce malloc-sizes.
+physical_size:            100000               
 physical_usage:           0.75
 physical_structures_base: ALTMEMDDR_1_BASE
 tasks:
-   - name: blubber
+   - name: blubber # just some name
      modi: 
        - RT_MMU_CONTROL_LINEAR
        - RT_MMU_CONTROL_SIMPLE
@@ -11,7 +12,7 @@ tasks:
      tablebase: 0x12345678
      markerbase: 0x12345678
      treebase: 0x12345678
-   - name: plapper
+   - name: plapper # just some name
      modi: 
        - RT_MMU_CONTROL_LINEAR
        - RT_MMU_CONTROL_TREE
@@ -19,11 +20,27 @@ tasks:
      markerbase: 0x12345678
      treebase: 0x12345678
 
+# there are always exactly max_task_num tasks active
 max_task_num:             5
+
+# whole: Tasks are only instantiated at beginning, deleted at end
+# not-whole: Tasks are changed in between
 lifetime_of_tasks:        not-whole
+
 number_of_mallocs:        100
 number_of_accesses:       100
-number_of_task_switches:  30              # this value will not be accomplished exactly
+
+# This value will not be kept precisely, its just a guide.
+number_of_task_switches:  30              
+
+# split number_of_accesses into reads and writes (in [0, 1])
 percent_of_reads:         .5
-malloc_size_min:          10000
-malloc_size_max:          20000
+
+# size of memory allocation
+malloc_size_min:          1000
+malloc_size_max:          2000
+
+# Probability that a variable is freed (as opposed to a new one allocated).
+# Determines implicitly how many variables are allocated at given time.
+# Use the statistics provided at end of program to determine suitable values.
+free_prob:                0.1             

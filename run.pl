@@ -4,8 +4,7 @@ use Moose;
 use Moose::Util::TypeConstraints;
 use Carp qw/croak/;
 
-enum 'MMU::PageBase' => qw( ALTMEMDDR_0_BASE ALTMEMDDR_1_BASE );
-has 'pagesbase' => (is => 'rw', isa => 'MMU::PageBase');
+has 'pagesbase' => (is => 'rw', isa => 'Str');
 has 'memsize'   => (is => 'rw', isa => 'Str');
 has 'activetask' => (is => 'rw', isa => 'Str', default => "none");
 has 'maxalloc'  => (is => 'rw', isa => 'Int', required => 1);
@@ -186,6 +185,7 @@ package main;
 use Data::Dumper;
 use List::Util qw/sum max/;
 use YAML::Tiny;
+use Statistics::Descriptive;
 
 sub task_factory{
 	my $cfg = shift;
@@ -228,8 +228,8 @@ my @actions = qw/ malloc_var free_var assign_var read_var /;
 push @actions, qw/ switch_task / unless $whole;
 
 my $rnd_weights = [
-  $cfg->{number_of_mallocs} ,  # malloc
-  $cfg->{number_of_mallocs} ,  # free
+  $cfg->{number_of_mallocs} ,    # malloc
+  $cfg->{number_of_mallocs}    * $cfg->{free_prob} ,  # free
   (1-$cfg->{percent_of_reads}) * $cfg->{number_of_accesses},  # assign
      $cfg->{percent_of_reads}  * $cfg->{number_of_accesses},  # read
 ];
@@ -237,6 +237,8 @@ push @$rnd_weights, $cfg->{number_of_task_switches} unless $whole;  # switch_tas
 my $s = sum @$rnd_weights;
 @$rnd_weights = map{ $_/$s } @$rnd_weights;
 
+my $var_stats = Statistics::Descriptive::Full->new();
+my $mem_stats = Statistics::Descriptive::Full->new();
 my $max_var_num = 0;
 my $sum_var_num = 0;
 my $cnt_var_num = 0;
@@ -249,6 +251,7 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
    my $act = $actions[ choose_weighted( $rnd_weights ) ];
    if($act eq "malloc_var"){
      next if $actionstats{$act} >= $cfg->{number_of_mallocs};
+     next if $mmu->memsize < $cfg->{malloc_size_max}; # don't try to allocate if there is a chance to fail
      my $size = int( $cfg->{malloc_size_min}+($cfg->{malloc_size_max}-$cfg->{malloc_size_min})*rand() );
      my $t    = $tasks[int(rand($#tasks+1))];
      my $v    = new Var(name=>"_var".int(rand(1E6)), size=>$size, task => $t);
@@ -298,9 +301,8 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
    }
    $actionstats{$act}++;
    $actionstats{num_acc} = $actionstats{read_var} + $actionstats{assign_var};
-   $sum_var_num += scalar @vars;
-   $cnt_var_num ++;
-   $sum_mem_size += $mmu->memsize;
+   $var_stats->add_data(scalar @vars);
+   $mem_stats->add_data($mmu->memsize);
 }
 while(scalar @vars){
   my $v = shift @vars;
@@ -316,11 +318,15 @@ $mmu->finish();
 my $doc = YAML::Tiny::Dump(\%actionstats);
 $doc =~ s|^---$||gm;
 $doc =~ s|^|// |gm;
-print  "// --------------- BEGIN CALL STATISTICS ------------- // \n";
+print  "// --------------- CALL STATISTICS ----------------- \\\\ \n";
 print  $doc;
 print  "// \n";
-print  "// Maximum number of allocated variables: " . $max_var_num . "\n";
-printf "// Average number of allocated variables: %3.3f\n" , $sum_var_num/$cnt_var_num;
-printf "// Average number of available bytes:     %3.3f\n" , $sum_mem_size/$cnt_var_num;
-printf "// Average number of used bytes:          %3.3f\n" , $mmu->memsize - $sum_mem_size/$cnt_var_num;
-print  "// --------------- END CALL STATISTICS ------------- // \n";
+print  "// --------------- VARIABLE STATISTICS ------------- \\\\ \n";
+print  "// Maximum number of allocated variables: " . $var_stats->max() . "\n";
+printf "// Average number of allocated variables: %3.3f +/- %3.3f\n" , $var_stats->mean(), $var_stats->standard_deviation();
+printf "//  \n";
+print  "// --------------- MEMORY STATISTICS --------------- \\\\ \n";
+printf "// Maximum number of available bytes:     %3.3f\n" , $mem_stats->max();
+printf "// Minimum number of available bytes:     %3.3f\n" , $mem_stats->min();
+printf "// Average number of available bytes:     %3.3f +/- %3.3f\n" , $mem_stats->mean(), $mem_stats->standard_deviation();
+printf "// Average number of used bytes:          %3.3f\n" , $mmu->memsize - $mem_stats->mean();
