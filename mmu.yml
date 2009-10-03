@@ -1,0 +1,28 @@
+---
+physical_size:            1000000
+physical_usage:           0.75
+physical_structures_base: ALTMEMDDR_1_BASE
+tasks:
+   - name: blubber
+     modi: 
+       - RT_MMU_CONTROL_LINEAR
+       - RT_MMU_CONTROL_SIMPLE
+       - RT_MMU_CONTROL_TREE
+     tablebase: 0x12345678
+     markerbase: 0x12345678
+     treebase: 0x12345678
+   - name: plapper
+     modi: 
+       - RT_MMU_CONTROL_LINEAR
+       - RT_MMU_CONTROL_TREE
+     tablebase: 0x12345678
+     markerbase: 0x12345678
+     treebase: 0x12345678
+
+max_task_num:             5
+lifetime_of_tasks:        not-whole
+number_of_mallocs:        10
+number_of_accesses:       10
+percent_of_reads:         .5
+malloc_size_min:          1000
+malloc_size_max:          10000
