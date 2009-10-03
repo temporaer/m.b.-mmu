@@ -249,10 +249,11 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
 	$actionstats{num_acc} < $cfg->{number_of_accesses}
 ){
    my $act = $actions[ choose_weighted( $rnd_weights ) ];
+   next if($act eq "switch_task" and $actionstats{num_acc} < $actionstats{switch_task});
    if($act eq "malloc_var"){
      next if $actionstats{$act} >= $cfg->{number_of_mallocs};
-     next if $mmu->memsize < $cfg->{malloc_size_max}; # don't try to allocate if there is a chance to fail
      my $size = int( $cfg->{malloc_size_min}+($cfg->{malloc_size_max}-$cfg->{malloc_size_min})*rand() );
+     next if $mmu->memsize -$size< $mmu->maxalloc ;
      my $t    = $tasks[int(rand($#tasks+1))];
      my $v    = new Var(name=>"_var".int(rand(1E6)), size=>$size, task => $t);
      $t->activate();

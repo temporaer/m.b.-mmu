@@ -37,8 +37,8 @@ number_of_task_switches:  30
 percent_of_reads:         .5
 
 # size of memory allocation
-malloc_size_min:          1000
-malloc_size_max:          2000
+malloc_size_min:          50000
+malloc_size_max:          100000
 
 # Probability that a variable is freed (as opposed to a new one allocated).
 # Determines implicitly how many variables are allocated at given time.
