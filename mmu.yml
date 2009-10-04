@@ -1,6 +1,6 @@
 ---
 # if the program fails because of memory problems, reduce malloc-sizes.
-physical_size:            100000               
+physical_size:            1000000               
 physical_usage:           0.75
 physical_structures_base: ALTMEMDDR_1_BASE
 tasks:

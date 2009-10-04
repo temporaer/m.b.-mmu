@@ -198,14 +198,10 @@ sub task_factory{
 sub choose_weighted {
 	my $weights  = shift;
 	my $total    = 0;
-
 	$total += $_ for @$weights;
-
 	my $rand_val = $total * rand;
 	my $i        = -1;
-
 	$rand_val -= $weights->[++$i] while ($rand_val > 0);
-
 	return $i;
 }
 
@@ -219,30 +215,26 @@ my $mmu = new MMU( memsize        => $cfg->{physical_size},
 		   maxalloc       => $cfg->{physical_usage} * $cfg->{physical_size});
 $mmu->init();
 
-my (@tasks, @vars);
+my (@tasks, @vars);   # create the max_task_num first tasks
 push @tasks, map{ task_factory($cfg->{tasks}, $mmu) }(1..$cfg->{max_task_num});
-map{ $_->create(), "\n" } @tasks;
+$_->create() foreach(@tasks);
 
-my $whole = $cfg->{lifetime_of_tasks} eq "whole";
+my $whole = $cfg->{lifetime_of_tasks} eq "whole"; # create set of possible actions
 my @actions = qw/ malloc_var free_var assign_var read_var /;
 push @actions, qw/ switch_task / unless $whole;
 
-my $rnd_weights = [
+my $rnd_weights = [   # create probability table for actions (same order!)
   $cfg->{number_of_mallocs} ,    # malloc
   $cfg->{number_of_mallocs}    * $cfg->{free_prob} ,  # free
   (1-$cfg->{percent_of_reads}) * $cfg->{number_of_accesses},  # assign
      $cfg->{percent_of_reads}  * $cfg->{number_of_accesses},  # read
 ];
-push @$rnd_weights, $cfg->{number_of_task_switches} unless $whole;  # switch_task (TODO: specify probs!)
+push @$rnd_weights, $cfg->{number_of_task_switches} unless $whole;  # switch_task 
 my $s = sum @$rnd_weights;
-@$rnd_weights = map{ $_/$s } @$rnd_weights;
+@$rnd_weights = map{ $_/$s } @$rnd_weights;  # normalize probabilities
 
 my $var_stats = Statistics::Descriptive::Full->new();
 my $mem_stats = Statistics::Descriptive::Full->new();
-my $max_var_num = 0;
-my $sum_var_num = 0;
-my $cnt_var_num = 0;
-my $sum_mem_size = 0;
 
 my %actionstats = map{ $_ => 0 } (@actions, 'num_acc');
 while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
@@ -250,7 +242,7 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
 ){
    my $act = $actions[ choose_weighted( $rnd_weights ) ];
    next if($act eq "switch_task" and $actionstats{num_acc} < $actionstats{switch_task});
-   if($act eq "malloc_var"){
+   if($act eq "malloc_var"){ # allocate a new variable
      next if $actionstats{$act} >= $cfg->{number_of_mallocs};
      my $size = int( $cfg->{malloc_size_min}+($cfg->{malloc_size_max}-$cfg->{malloc_size_min})*rand() );
      next if $mmu->memsize -$size< $mmu->maxalloc ;
@@ -259,9 +251,8 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
      $t->activate();
      $t->add_var( $v );
      push @vars, $v;
-     $max_var_num = max($max_var_num, scalar @vars);
    }
-   if($act eq "free_var"){
+   if($act eq "free_var"){   # free a variable
      if($actionstats{malloc_var} >= $cfg->{number_of_mallocs} # cannot allocate new variable
        and scalar @vars == 1 ){                               # and only one variable left
        next;
@@ -271,49 +262,44 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
      $v->task->activate();
      $v->task->del_var( $v );
    }
-   if($act eq "read_var"){
+   if($act eq "read_var"){   # read from some variable
      next unless $actionstats{read_var} < $cfg->{percent_of_reads} * $cfg->{number_of_accesses};
      next unless scalar @vars;
      my $v = $vars[int(rand($#vars+1))];
      $v->read( int(rand($v->size)) );
    }
-   if($act eq "assign_var"){
+   if($act eq "assign_var"){ # assign to a variable
      next unless $actionstats{assign_var} < (1-$cfg->{percent_of_reads}) * $cfg->{number_of_accesses};
      next unless scalar @vars;
      my $v = $vars[int(rand($#vars+1))];
      $v->assign( int(rand($v->size)), int(rand(10000)) );
    }
-   if($act eq "switch_task"){
+   if($act eq "switch_task"){  # remove a task and add another
      next if scalar @tasks <= 1;
      next if($actionstats{malloc_var}>=$cfg->{number_of_mallocs}  # all mallocs used up
           and $actionstats{num_acc}<$cfg->{number_of_accesses});  # still need to access variables -> dont del task!
      my $t = shift @tasks;
-     @vars = grep{
+     @vars = grep{             # remove variables of this task
 	if( $_->task == $t){ 
 	$_->task->activate();
 	$_->task->del_var($_); 0}
 	else{ 1 }
      }@vars;
-     $t->destroy();
-     next if scalar @tasks >= $cfg->{max_task_num};
-     $t = task_factory($cfg->{tasks}, $mmu);
-     $t->create();
+     $t->destroy();            # destroy task
+     $t = task_factory($cfg->{tasks}, $mmu); # get new task
+     $t->create();             
      unshift @tasks, $t;
    }
-   $actionstats{$act}++;
+   $actionstats{$act}++;       # remember how often action was processed
    $actionstats{num_acc} = $actionstats{read_var} + $actionstats{assign_var};
-   $var_stats->add_data(scalar @vars);
-   $mem_stats->add_data($mmu->memsize);
+   $var_stats->add_data(scalar @vars);  # statistics: number of variables
+   $mem_stats->add_data($mmu->memsize); # statistics: memory size
 }
-while(scalar @vars){
-  my $v = shift @vars;
-  $v->task->activate();
-  $v->task->del_var($v);
-}
-while(scalar @tasks){
-  my $t = pop @tasks;
-  $t->destroy();
-}
+# deallocate all remaining variables
+map{ $_->task->activate(); $_->task->del_var($_); } @vars;
+# deallocate all tasks
+map{ $_->destroy(); } @tasks;
+# deallocate MMU
 $mmu->finish();
 
 my $doc = YAML::Tiny::Dump(\%actionstats);
