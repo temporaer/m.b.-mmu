@@ -1,6 +1,6 @@
 ---
 # if the program fails because of memory problems, reduce malloc-sizes.
-physical_size:            1000000               
+physical_size:            100000               
 physical_usage:           0.75
 physical_structures_base: ALTMEMDDR_1_BASE
 tasks:
@@ -37,10 +37,10 @@ number_of_task_switches:  30
 percent_of_reads:         .5
 
 # size of memory allocation
-malloc_size_min:          50000
-malloc_size_max:          100000
+malloc_size_min:          500
+malloc_size_max:          1000
 
 # Probability that a variable is freed (as opposed to a new one allocated).
 # Determines implicitly how many variables are allocated at given time.
 # Use the statistics provided at end of program to determine suitable values.
-free_prob:                0.1             
+free_prob:                0.05
