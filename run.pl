@@ -77,7 +77,7 @@ before 'isalloc' => sub{
 };
 
 around 'alloc'  => sub{ my $orig=shift; my $self=shift; $self->time_code('MALLOC',$orig,@_); };
-around 'assign' => sub{ my $orig=shift; my $self=shift; $self->time_code('ACC_READ',$orig,@_); };
+around 'assign' => sub{ my $orig=shift; my $self=shift; $self->time_code('ACC_WRITE',$orig,@_); };
 around 'read'   => sub{ my $orig=shift; my $self=shift; $self->time_code('ACC_READ',$orig,@_); };
 around 'free'   => sub{ my $orig=shift; my $self=shift; $self->time_code('FREE',$orig,@_); };
 before 'read', 'assign' => sub{ 
@@ -195,15 +195,21 @@ sub add_var{
 
 package main;
 use Data::Dumper;
-use List::Util qw/sum max/;
+use List::Util qw/sum max shuffle first min/;
 use YAML::Tiny;
 use Statistics::Descriptive;
 
+sub free_task_set{
+	my $cfg = shift;
+	my $freed = shift;
+	map { $_->{used} = 0 if $_->{name} eq $freed->name; } @$cfg;
+}
 sub task_factory{
 	my $cfg = shift;
 	my $mmu = shift;
-	my $x   = shift(@$cfg);
-	push @$cfg, $x;
+	@$cfg   = shuffle @$cfg;
+	my $x   = first { !defined $_->{used}  or !$_->{used} } @$cfg;
+	$x->{used} = 1;
 	new Task( mmu => $mmu, %$x); 
 }
 
@@ -236,7 +242,7 @@ print $plaincfg, "\n\n";
 $mmu->init();
 
 my (@tasks, @vars);   # create the max_task_num first tasks
-push @tasks, map{ task_factory($cfg->{tasks}, $mmu) }(1..$cfg->{max_task_num});
+push @tasks, map{ task_factory($cfg->{tasks}, $mmu) }(1..min($cfg->{max_task_num},scalar @{$cfg->{tasks}}));
 $_->create() foreach(@tasks);
 
 my $whole = $cfg->{lifetime_of_tasks} eq "whole"; # create set of possible actions
@@ -264,7 +270,7 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
    next if($act eq "switch_task" and $actionstats{num_acc} < $actionstats{switch_task});
    if($act eq "malloc_var"){ # allocate a new variable
      next if $actionstats{$act} >= $cfg->{number_of_mallocs};
-     my $size = int( $cfg->{malloc_size_min}+($cfg->{malloc_size_max}-$cfg->{malloc_size_min})*rand() );
+     my $size = int( ($cfg->{malloc_size_min}+($cfg->{malloc_size_max}-$cfg->{malloc_size_min})*rand())/4 )*4;
      next if( (sum map{$_->size} @vars) + $size > $mmu->maxalloc );
      my $t    = $tasks[int(rand($#tasks+1))];
      my $v    = new Var(name=>"_var".int(rand(1E6)), size=>$size, task => $t);
@@ -306,6 +312,7 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
 	else{ 1 }
      }@vars;
      $t->destroy();            # destroy task
+     free_task_set($cfg->{tasks}, $t);
      $t = task_factory($cfg->{tasks}, $mmu); # get new task
      $t->create();             
      unshift @tasks, $t;

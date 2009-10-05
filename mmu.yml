@@ -4,7 +4,7 @@ physical_size:            100000
 physical_usage:           0.75
 physical_structures_base: ALTMEMDDR_1_BASE
 tasks:
-   - name: blubber # just some name
+   - name: blubber
      modi: 
        - RT_MMU_CONTROL_LINEAR
        - RT_MMU_CONTROL_SIMPLE
@@ -12,7 +12,7 @@ tasks:
      tablebase: 0x12345678
      markerbase: 0x12345678
      treebase: 0x12345678
-   - name: plapper # just some name
+   - name: plapper
      modi: 
        - RT_MMU_CONTROL_LINEAR
        - RT_MMU_CONTROL_TREE
