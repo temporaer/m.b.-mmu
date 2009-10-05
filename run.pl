@@ -291,13 +291,13 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
    if($act eq "read_var"){   # read from some variable
      next unless $actionstats{read_var} < $cfg->{percent_of_reads} * $cfg->{number_of_accesses};
      next unless scalar @vars;
-     my $v = $vars[int(rand($#vars+1)/4)*4];
+     my $v = $vars[int(rand($#vars+1)/4)];
      $v->read( int(rand($v->size)) );
    }
    if($act eq "assign_var"){ # assign to a variable
      next unless $actionstats{assign_var} < (1-$cfg->{percent_of_reads}) * $cfg->{number_of_accesses};
      next unless scalar @vars;
-     my $v = $vars[int(rand($#vars+1)/4)*4];
+     my $v = $vars[int(rand($#vars+1)/4)];
      $v->assign( int(rand($v->size)), int(rand(10000)) );
    }
    if($act eq "switch_task"){  # remove a task and add another
