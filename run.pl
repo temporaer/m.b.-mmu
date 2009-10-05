@@ -130,11 +130,11 @@ has 'created'   => (is => 'rw', isa => 'Bool', default => 0);
 has 'activated' => (is => 'rw', isa => 'Bool', default => 0);
 has 'mmu'       => (is => 'rw', isa => 'MMU', required => 1);
 #has 'memsize'   => (is => 'rw', isa => 'Int', default => sub{shift()->mmu->memsize});
-has 'vars'      => ( traits  => ['Array'],
+has 'vars'      => ( #traits  => ['Array'],
 	is => 'rw', 
 	isa => 'ArrayRef[Var]',
 	default => sub{[]},
-	handles => { _add_var => 'push', _next_var => 'shift', '_all_vars' => 'elements' }
+	#handles => { _add_var => 'push', _next_var => 'shift', '_all_vars' => 'elements' }
 );
 
 sub create {
@@ -174,7 +174,7 @@ sub del_var{
 	my $self = shift;
 	my $var  = shift;
 	croak "Deleting from non-activated task" unless ($self->mmu->activetask eq $self->name);
-	$self->vars( [ grep{ $_ != $var } $self->_all_vars ]  );
+	$self->vars( [ grep{ $_ != $var } @{$self->vars }]  );
 	$self->mmu->memsize( $self->mmu->memsize + $var->size );
 	croak "No more memory left!" unless $self->mmu->memsize > 0;
 	$var->free();
@@ -184,7 +184,8 @@ sub add_var{
 	my $self = shift;
 	my $var  = shift;
 	croak "Adding to non-activated task" unless ($self->mmu->activetask eq $self->name);
-	$self->_add_var( $var );
+	#$self->_add_var( $var );
+	push @{$self->vars}, $var;
 	$self->mmu->memsize( $self->mmu->memsize - $var->size );
 	croak "No more memory left!" unless $self->mmu->memsize > 0;
 	$var->alloc();
