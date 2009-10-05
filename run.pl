@@ -1,4 +1,16 @@
 # vim:tw=0:cindent
+package Timable;
+use Moose::Role;
+sub time_code{ 
+	my $self = shift;
+	my $func = shift;
+	my $orig = shift;
+	print "// TODO: Start timer for $func\n";
+	$self->$orig(@_);
+	print "// TODO: End timer for $func\n";
+	print "// TODO: Keep statistics for $func\n";
+};
+
 package MMU;
 use Moose;
 use Moose::Util::TypeConstraints;
@@ -52,51 +64,50 @@ package Var;
 use Moose;
 use Moose::Util::TypeConstraints;
 use Carp qw/croak/;
+with 'Timable';
 
-has 'name' => (is => 'ro', isa => 'Str', required => 1);
-has 'size' => (is => 'ro', isa => 'Int', required => 1);
-has 'task' => (is => 'ro', isa => 'Task', required => 1);
+has 'name'    => (is => 'ro', isa => 'Str', required => 1);
+has 'size'    => (is => 'ro', isa => 'Int', required => 1);
+has 'task'    => (is => 'ro', isa => 'Task', required => 1);
 has 'isalloc' => (is => 'rw', isa => 'Bool', default => 0);
 
+before 'isalloc' => sub{
+	croak "Cannot allocate already allocated var"  if ( $_[1] and $_[0]->isalloc);
+	croak "Cannot free un-allocated var"  if (defined $_[1] and !$_[1] and !$_[0]->isalloc);
+};
+
+around 'alloc'  => sub{ my $orig=shift; my $self=shift; $self->time_code('MALLOC',$orig,@_); };
+around 'assign' => sub{ my $orig=shift; my $self=shift; $self->time_code('ACC_READ',$orig,@_); };
+around 'read'   => sub{ my $orig=shift; my $self=shift; $self->time_code('ACC_READ',$orig,@_); };
+around 'free'   => sub{ my $orig=shift; my $self=shift; $self->time_code('FREE',$orig,@_); };
+before 'read', 'assign' => sub{ 
+	croak "Var must by allocated before assign/read!" unless $_[0]->isalloc;
+	$_[0]->check_idx($_[1]) 
+};
+
+sub check_idx{ 
+	my ($self,$idx) = @_;
+	croak "Index must be >=0"            unless $idx>=0;
+	croak "Index must be <".$self->size  unless $idx<$self->size;
+}
+
 sub alloc{
-	my $self = shift;
-	croak "Var is already allocated!" if $self->isalloc;
-	$self->isalloc(1);
-	print "// begin_measure_time()\n";
-	print "unsigned int * " . $self->name . " = (unsigned int*) malloc(" .  $self->size . ");\n" ;
-	print "// end_measure_time()\n";
-	print "// statistics: malloc " . $self->task->modus . "\n";
+	print "unsigned int * " . $_[0]->name . " = (unsigned int*) malloc(" .  $_[0]->size . ");\n" ;
+	$_[0]->isalloc(1);
 }
 
 sub assign{
 	my ($self,$idx,$val)  = @_;
-	croak "Var is not yet allocated!"   unless $self->isalloc;
-	croak "Index must be >0"            unless $idx>0;
-	croak "Index must be <".$self->size unless $idx<$self->size;
-	print "// begin_measure_time()\n";
 	print $self->name . "[" . $val . "] = $val;\n";
-	print "// end_measure_time()\n";
-	print "// statistics: access-write " . $self->task->modus . "\n";
 }
 
 sub read{
 	my ($self,$idx)  = @_;
-	croak "Var is not yet allocated!"   unless $self->isalloc;
-	croak "Index must be >=0"           unless $idx>=0;
-	croak "Index must be <".$self->size unless $idx<$self->size;
-	print "// begin_measure_time()\n";
 	print "unsigned int _i" . int(rand(1E10)) . " = " .  $self->name . "[" .  $idx . "];\n";
-	print "// end_measure_time()\n";
-	print "// statistics: access-read ". $self->task->modus . "\n";
 }
 sub free{
-	my ($self,$idx)  = @_;
-	croak "Var is not yet allocated!"   unless $self->isalloc;
-	$self->isalloc(0);
-	print "// begin_measure_time()\n";
-	print "free(". $self->name . ");\n";
-	print "// end_measure_time()\n";
-	print "// statistics: free\n";
+	print "free(". $_[0]->name . ");\n";
+	$_[0]->isalloc(0);
 }
 
 package Task;
@@ -213,6 +224,14 @@ my $mmu = new MMU( memsize        => $cfg->{physical_size},
                    pagesbase      => $cfg->{physical_structures_base},
 		   avail_tasksets => [map{"task$_"}(1..$cfg->{max_task_num})],
 		   maxalloc       => $cfg->{physical_usage} * $cfg->{physical_size});
+print "// ********************************************** \\\\";
+print "// THIS IS A GENERATED C-File. \n";
+print "// See Statistics at the end.\n";
+print "// The config-file used to produce it is shown below.\n";
+print "// ********************************************** \\\\\n\n";
+my $plaincfg = `cat mmu.yml`;
+$plaincfg =~ s|^|// |mg;
+print $plaincfg, "\n\n";
 $mmu->init();
 
 my (@tasks, @vars);   # create the max_task_num first tasks
