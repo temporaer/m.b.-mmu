@@ -6,15 +6,30 @@ sub time_code{
 	my $func = shift;
 	my $orig = shift;
 	print "// TODO: Start timer for $func\n";
+	print "IOWR_ALTERA_AVALON_TIMER_PERIODL(TIMER_0_BASE, 0xFFFF);\n";
+    print "IOWR_ALTERA_AVALON_TIMER_PERIODH(TIMER_0_BASE, 0xFFFF);\n";
+    print "IOWR_ALTERA_AVALON_TIMER_CONTROL(TIMER_0_BASE, ALTERA_AVALON_TIMER_CONTROL_START_MSK);\n";
 	$self->$orig(@_);
 	print "// TODO: End timer for $func\n";
+	print "IOWR_ALTERA_AVALON_TIMER_CONTROL(TIMER_0_BASE, ALTERA_AVALON_TIMER_CONTROL_STOP_MSK);\n";
+    print "IOWR_ALTERA_AVALON_TIMER_SNAPH(TIMER_0_BASE, 0xFFFF);\n";
+    print "time = 0xFFFFFFFF - (((IORD_ALTERA_AVALON_TIMER_SNAPH(TIMER_0_BASE)) << 16) | (IORD_ALTERA_AVALON_TIMER_SNAPL(TIMER_0_BASE)));\n";
 	print "// TODO: Keep statistics for $func\n";
+	print "benchmarks[i].taskID = eActiveTask->taskID;\n";
+    print "benchmarks[i].MMUMode = eActiveTask->MMUMode;\n";
+    print "benchmarks[i].action = $func;\n";
+    print "benchmarks[i].allocSize = ".$self->size.";\n";
+    print "benchmarks[i].time = time;\n";
+	print "i++;\n";
+	print "if (!(i%128))\n";
+    print "IOWR_ALTERA_AVALON_PIO_DATA(PIO_1_BASE, (IORD_ALTERA_AVALON_PIO_DATA(PIO_1_BASE) + 1));\n";
 };
 
 package MMU;
 use Moose;
 use Moose::Util::TypeConstraints;
 use Carp qw/croak/;
+use YAML::Tiny;
 
 has 'pagesbase' => (is => 'rw', isa => 'Str');
 has 'memsize'   => (is => 'rw', isa => 'Str');
@@ -23,6 +38,9 @@ has 'maxalloc'  => (is => 'rw', isa => 'Int', required => 1);
 has 'used_tasksets'  => (is => 'rw', isa => 'ArrayRef[Str]', default => sub{[]});
 has 'avail_tasksets' => (is => 'rw', isa => 'ArrayRef[Str]');
 
+my $yaml = YAML::Tiny->new;
+my $cfg = $yaml->read('mmu.yml')->[0]; # 1st document in file
+
 sub init{
 	my $self = shift;
 	my $text =<<"	EOT";
@@ -30,20 +48,42 @@ sub init{
 	#include "rt_mmu_regs.h"
 	#include "rt_mem/rt_mem.h"
 	#include "rt_mem/task.h"
+	#include "rt_mem/configure.h"
+	#include "benchmarking.h"
+	#include "altera_avalon_timer_regs.h"
+	#include "altera_avalon_pio_regs.h"
+	#include <stdio.h>
+	
+	task_t* eActiveTask;
 	 
 	 int main(void) {
+	     unsigned int time;
+		 unsigned int i = 0;
+		 IOWR_ALTERA_AVALON_TIMER_CONTROL(TIMER_0_BASE, ALTERA_AVALON_TIMER_CONTROL_STOP_MSK);
+		 IOWR_ALTERA_AVALON_PIO_DATA(PIO_1_BASE, 0xFF);
 	     task_t
 	EOT
 	$text .= join(' ', @{$self->avail_tasksets}) . ";\n";
 	$text .= "initRTMem((void *) " . $self->pagesbase . ", " .  $self->memsize . ");";
-	print "$text\n"
+	print "$text\n";
+	print "benchmark_t benchmarks[2 * $cfg->{number_of_mallocs} + $cfg->{number_of_accesses}];\n";
 }
 
 sub finish{
 	my $self = shift;
-	print "destroyRTMem();
-// TODO: printf(...); // statistics
-}\n";
+	#print "destroyRTMem();\n";
+    print "for (i = 0; i < (2 * $cfg->{number_of_mallocs} + $cfg->{number_of_accesses}); i++)\n";
+	print "printf(\"%u, %X, %X, %u, %u\\n\", (unsigned int) benchmarks[i].taskID, (unsigned int) benchmarks[i].MMUMode, (unsigned int) benchmarks[i].action, (unsigned int) benchmarks[i].allocSize, (unsigned int) benchmarks[i].time);\n";
+	print "printf(\"ENDE!\");\n";
+	print "i = 0;\n";
+    print "IOWR_ALTERA_AVALON_PIO_DATA(PIO_1_BASE, 0);\n";
+    print "while (1) {\n";
+    print "    if (!(i%524288))\n";
+    print "        IOWR_ALTERA_AVALON_PIO_DATA(PIO_1_BASE, (~(IORD_ALTERA_AVALON_PIO_DATA(PIO_1_BASE))));\n";
+    print "    i++;\n";
+    print "}\n";
+	print "}\n";
+	
 }
 
 sub free_task{
@@ -103,7 +143,7 @@ sub assign{
 
 sub read{
 	my ($self,$idx)  = @_;
-	print "unsigned int _i" . int(rand(1E10)) . " = " .  $self->name . "[" .  $idx . "];\n";
+	print "unsigned int _i" . ::main::uniq_var() . " = " .  $self->name . "[" .  $idx . "];\n";
 }
 sub free{
 	print "free(". $_[0]->name . ");\n";
@@ -223,19 +263,30 @@ sub choose_weighted {
 	return $i;
 }
 
+my %used_var_names;
+sub uniq_var{
+	my $v;
+	do {
+		$v = "var_" . int(rand(1E6))
+	} while($used_var_names{$v}++);
+	$v
+}
 
-my $yaml = YAML::Tiny->new;
-my $cfg = $yaml->read('mmu.yml')->[0]; # 1st document in file
+
+#my $yaml = YAML::Tiny->new;
+#my $cfg = $yaml->read('mmu.yml')->[0]; # 1st document in file
+
+
 
 my $mmu = new MMU( memsize        => $cfg->{physical_size}, 
                    pagesbase      => $cfg->{physical_structures_base},
 		   avail_tasksets => [map{"task$_"}(1..$cfg->{max_task_num})],
-		   maxalloc       => $cfg->{physical_usage} * $cfg->{physical_size});
-print "// ********************************************** \\\\";
+		   maxalloc       => int($cfg->{physical_usage} * $cfg->{physical_size}));
+print "// **********************************************";
 print "// THIS IS A GENERATED C-File. \n";
 print "// See Statistics at the end.\n";
 print "// The config-file used to produce it is shown below.\n";
-print "// ********************************************** \\\\\n\n";
+print "// **********************************************\n\n";
 my $plaincfg = `cat mmu.yml`;
 $plaincfg =~ s|^|// |mg;
 print $plaincfg, "\n\n";
@@ -263,7 +314,7 @@ my $var_stats = Statistics::Descriptive::Full->new();
 my $mem_stats = Statistics::Descriptive::Full->new();
 
 my %actionstats = map{ $_ => 0 } (@actions, 'num_acc');
-while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
+while(  ($actionstats{malloc_var} < $cfg->{number_of_mallocs} and $cfg->{free_prob} > 0.0000001) or
 	$actionstats{num_acc} < $cfg->{number_of_accesses}
 ){
    my $act = $actions[ choose_weighted( $rnd_weights ) ];
@@ -273,7 +324,7 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
      my $size = int( ($cfg->{malloc_size_min}+($cfg->{malloc_size_max}-$cfg->{malloc_size_min})*rand())/4 )*4;
      next if( (sum (0,map{$_->size} @vars)) + $size > $mmu->maxalloc );
      my $t    = $tasks[int(rand($#tasks+1))];
-     my $v    = new Var(name=>"_var".int(rand(1E6)), size=>$size, task => $t);
+     my $v    = new Var(name=>uniq_var(), size=>$size, task => $t);
      $t->activate();
      $t->add_var( $v );
      push @vars, $v;
@@ -291,14 +342,14 @@ while(  $actionstats{malloc_var} < $cfg->{number_of_mallocs} or
    if($act eq "read_var"){   # read from some variable
      next unless $actionstats{read_var} < $cfg->{percent_of_reads} * $cfg->{number_of_accesses};
      next unless scalar @vars;
-     my $v = $vars[int(rand($#vars+1)/4)];
-     $v->read( int(rand($v->size)) );
+     my $v = $vars[int(rand($#vars+1))];
+     $v->read( int(rand($v->size)/4) );
    }
    if($act eq "assign_var"){ # assign to a variable
      next unless $actionstats{assign_var} < (1-$cfg->{percent_of_reads}) * $cfg->{number_of_accesses};
      next unless scalar @vars;
-     my $v = $vars[int(rand($#vars+1)/4)];
-     $v->assign( int(rand($v->size)), int(rand(10000)) );
+     my $v = $vars[int(rand($#vars+1))];
+     $v->assign( int(rand($v->size)/4), int(rand(10000)) );
    }
    if($act eq "switch_task"){  # remove a task and add another
      next if scalar @tasks <= 1;
