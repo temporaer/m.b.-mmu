@@ -314,7 +314,11 @@ my $var_stats = Statistics::Descriptive::Full->new();
 my $mem_stats = Statistics::Descriptive::Full->new();
 
 my %actionstats = map{ $_ => 0 } (@actions, 'num_acc');
-while(  ($actionstats{malloc_var} < $cfg->{number_of_mallocs} and $cfg->{free_prob} > 0.0000001) or
+while(  
+     ($actionstats{malloc_var} < $cfg->{number_of_mallocs} 
+      and ( $cfg->{free_prob} > 0.0000001 
+	or  $mmu->maxalloc > (sum (0,map{$_->size} @vars))+$cfg->{malloc_size_min} ) )
+     or
 	$actionstats{num_acc} < $cfg->{number_of_accesses}
 ){
    my $act = $actions[ choose_weighted( $rnd_weights ) ];
